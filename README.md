@@ -1,24 +1,58 @@
-<<<<<<< HEAD
-testing testing testing readme
-=======
-# AI Class Test Repository
+# OIM3641 Classwork Repository
 
-This repository demonstrates the basics of Git version control.
+  Hi! I'm Brandon Shore, a student in OIM3641 exploring AI-driven
+  app development. This repository contains my coursework,
+  assignments, and projects as I learn to build intelligent
+  applications using Python, LLMs, and modern data science tools.
 
-## About This Project
+  ## Skills & Tools
 
-This is a practice repository created for an AI-driven app development class assignment. The purpose is to learn and demonstrate fundamental Git operations including:
+  ![Python](https://img.shields.io/badge/Python-3776AB?style=for-the
+  -badge&logo=python&logoColor=white)
+  ![Git](https://img.shields.io/badge/Git-F05032?style=for-the-badge
+  &logo=git&logoColor=white)
+  ![GitHub](https://img.shields.io/badge/GitHub-181717?style=for-the
+  -badge&logo=github&logoColor=white)
 
-- Repository initialization
-- Staging and committing changes
-- Working with remote repositories
-- Collaborating with Git and GitHub
+  **Languages:** Python
 
-## Author
 
-AI Student - Learning Git basics
+  ## Directory Structure
 
-## Date
+  OIM3641_classwork/
+  ├── README.md                              # This file
+  ├── .env                                   # Environment variables
+   (API keys)
+  ├── .gitignore                            # Git ignore rules
+  ├── hello.py                              # Basic Python script
+  ├── 02-python_concepts.ipynb              # Python fundamentals
+  notebook
+  ├── 03-demo_create_llamaindex.py          # LlamaIndex creation
+  demo
+  ├── 03-demo_llama_retrieval.py            # LlamaCloud retrieval
+  demo
+  └── 03-demo_llama_gemini_retrieval.py     # Gemini-powered
+  retrieval demo
 
-January 25, 2026
->>>>>>> 8886272 (First commit)
+  ## Installation & Setup
+
+  ### Prerequisites
+  - Python 3.10+ (avoid 3.14 due to compatibility issues)
+  - Conda or venv for environment management
+  - Git
+
+  ### Clone the Repository
+  ```bash
+  git clone
+  https://github.com/YOUR_GITHUB_USERNAME/OIM3641_classwork.git
+  cd OIM3641_classwork
+
+
+  # Install dependencies
+  pip install llama-index python-dotenv google-generativeai
+
+  Connect With Me
+
+  https://www.linkedin.com/in/brandonnshore/
+  https://github.com/brandonnshore
+  brandonnshore@gmail.com
