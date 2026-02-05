@@ -54,5 +54,5 @@ OIM3641_classwork/
 ```
 
 **Connect with me**
-http://github.com - automatic!
-[GitHub](http://github.com) 
+https://www.linkedin.com/in/brandonnshore/ - LINKEDIN!
+[GitHub] https://github.com/brandonnshore
