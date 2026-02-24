@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+  body { font-family: Arial, sans-serif; font-size: 14px; max-width: 850px; margin: 40px auto; padding: 0 20px; }
+  h1 { text-align: center; }
+  h2 { border-bottom: 2px solid #333; padding-bottom: 5px; margin-top: 40px; }
+  pre { background: #f4f4f4; padding: 12px; border-radius: 5px; overflow-x: auto; font-size: 13px; }
+  .note { color: green; margin: 8px 0; }
+  table { border-collapse: collapse; width: 100%; margin: 10px 0; }
+  th, td { border: 1px solid #999; padding: 8px; text-align: left; }
+  th { background: #f4f4f4; }
+  @media print { body { font-size: 12px; } pre { font-size: 11px; } }
+</style>
+</head>
+<body>
+
+<h1>STOCK.PY — LINE BY LINE BREAKDOWN</h1>
+
+<h2>IMPORTS (Lines 1-7)</h2>
+
+<pre>import datetime as dt</pre>
+<p class="note">Imports Python's built-in date/time library. We call it "dt" for short. Used to calculate dates like "one year ago."</p>
+
+<pre>import matplotlib.pyplot as plt</pre>
+<p class="note">Imports the plotting/charting library. "plt" is the standard shorthand. This is what draws our graphs.</p>
+
+<pre>import matplotlib.ticker as mtick</pre>
+<p class="note">A sub-module of matplotlib that lets us format axis labels — we use it to put "%" signs on the y-axis.</p>
+
+<pre>import numpy as np</pre>
+<p class="note">Imports NumPy, a math library. We use it for np.log() which calculates the natural logarithm (needed for instantaneous returns).</p>
+
+<pre>import pandas as pd</pre>
+<p class="note">Imports Pandas, a data library. It gives us DataFrames — basically spreadsheets in Python with rows and columns.</p>
+
+<pre>import seaborn as sb</pre>
+<p class="note">A plotting library built on top of matplotlib. Makes charts look nicer by default.</p>
+
+<pre>import yfinance as yf</pre>
+<p class="note">A library that downloads stock price data from Yahoo Finance for free.</p>
+
+<h2>SETUP (Lines 9, 19-20)</h2>
+
+<pre>sb.set_theme()</pre>
+<p class="note">Applies seaborn's default visual theme to all plots (nicer grid lines, colors, fonts).</p>
+
+<pre>DEFAULT_START = dt.date.isoformat(dt.date.today() - dt.timedelta(365))</pre>
+<p class="note">Creates a string of today's date minus 365 days in ISO format (like "2025-02-24"). Breaking it down:</p>
+<ul class="note">
+  <li>dt.date.today() — gets today's date</li>
+  <li>dt.timedelta(365) — represents 365 days</li>
+  <li>Subtracting them gives the date one year ago</li>
+  <li>dt.date.isoformat() — converts that date to a string like "2025-02-24"</li>
+</ul>
+
+<pre>DEFAULT_END = dt.date.isoformat(dt.date.today())</pre>
+<p class="note">Same thing but for today's date. So by default we get one year of data.</p>
+
+<h2>THE CLASS: Stock (Line 23)</h2>
+
+<pre>class Stock:</pre>
+<p class="note">Defines a class called Stock. A class is a blueprint — it bundles data (the stock prices) and functions (plotting, calculating) together into one object.</p>
+
+<h2>__init__ — The Constructor (Lines 24-28)</h2>
+
+<pre>def __init__(self, symbol, start=DEFAULT_START, end=DEFAULT_END):</pre>
+<p class="note">This runs automatically when you create a Stock object. Parameters:</p>
+<ul class="note">
+  <li>self — refers to the object itself (always first in a class method)</li>
+  <li>symbol — the stock ticker like "AAPL"</li>
+  <li>start — start date, defaults to one year ago</li>
+  <li>end — end date, defaults to today</li>
+</ul>
+
+<pre>    self.symbol = symbol
+    self.start = start
+    self.end = end</pre>
+<p class="note">Stores the inputs as attributes on the object so other methods can access them.</p>
+
+<pre>    self.data = self.get_data()</pre>
+<p class="note">Immediately calls get_data() and stores the result in self.data. So the moment you create a Stock object, it downloads the data.</p>
+
+<h2>get_data — Downloads Stock Data (Lines 30-36)</h2>
+
+<pre>def get_data(self):</pre>
+<p class="note">Method that downloads historical price data from Yahoo Finance.</p>
+
+<pre>    data = yf.download(self.symbol, start=self.start, end=self.end)</pre>
+<p class="note">Calls Yahoo Finance API. Downloads a table with columns: Open, High, Low, Close, Volume for every trading day in the date range. Stores it in a DataFrame called "data".</p>
+
+<pre>    data.columns = data.columns.get_level_values(0)</pre>
+<p class="note">yfinance returns multi-level column names like ('Close', 'AAPL'). This flattens them to just 'Close', 'Open', etc. get_level_values(0) grabs only the first level (the name, not the ticker).</p>
+
+<pre>    data.index = pd.to_datetime(data.index)</pre>
+<p class="note">Converts the row index (the dates) into proper pandas Datetime objects. This makes date-based operations and plotting work correctly.</p>
+
+<pre>    self.calc_returns(data)</pre>
+<p class="note">Calls the helper method to add the Change and Instant_Return columns to the data.</p>
+
+<pre>    return data</pre>
+<p class="note">Returns the enriched DataFrame, which gets stored in self.data back in __init__.</p>
+
+<h2>calc_returns — Calculates Daily Returns (Lines 38-41)</h2>
+
+<pre>def calc_returns(self, df):</pre>
+<p class="note">Helper method that adds two new columns to the DataFrame. Takes df (the DataFrame) as input.</p>
+
+<pre>    df['Change'] = df['Close'].pct_change()</pre>
+<p class="note">pct_change() is a pandas method that calculates the percentage change from one row to the next. So if yesterday's close was $100 and today's is $102, the Change = 0.02 (2%). The first row is NaN because there's no previous day to compare to.</p>
+
+<pre>    df['Instant_Return'] = np.log(df['Close']).diff().round(4)</pre>
+<p class="note">Calculates the instantaneous (logarithmic) return. Breaking it down:</p>
+<ul class="note">
+  <li>np.log(df['Close']) — takes the natural log of every closing price</li>
+  <li>.diff() — calculates the difference between each consecutive log price</li>
+  <li>.round(4) — rounds to 4 decimal places</li>
+  <li>This is the standard way to calculate "continuously compounded" returns in finance. Log returns are additive (you can sum them across days) which makes them useful for analysis.</li>
+</ul>
+
+<h2>add_technical_indicators — Moving Averages + Plot (Lines 43-58)</h2>
+
+<pre>def add_technical_indicators(self, windows=[20, 50]):</pre>
+<p class="note">Adds Simple Moving Averages (SMAs) to the data and plots them. windows=[20, 50] means it defaults to 20-day and 50-day moving averages.</p>
+
+<pre>    for w in windows:
+        self.data['SMA_' + str(w)] = self.data['Close'].rolling(window=w).mean()</pre>
+<p class="note">Loops through each window size (20, then 50):</p>
+<ul class="note">
+  <li>'SMA_' + str(w) — creates column name like "SMA_20" or "SMA_50"</li>
+  <li>.rolling(window=w) — creates a sliding window of w days</li>
+  <li>.mean() — calculates the average of those w days</li>
+  <li>So SMA_20 is the average closing price of the last 20 trading days, recalculated every day. The first 19 rows will be NaN because you need 20 days of data to calculate a 20-day average.</li>
+</ul>
+
+<p class="note"><strong>What's a moving average?</strong> It smooths out daily noise. If the price is above the SMA, the stock is trending up. If below, trending down. Traders use the 20-day (short-term) and 50-day (medium-term) crossovers as buy/sell signals.</p>
+
+<pre>    plt.figure(figsize=(10, 6))</pre>
+<p class="note">Creates a new chart that's 10 inches wide and 6 inches tall.</p>
+
+<pre>    plt.plot(self.data['Close'], label='Close')</pre>
+<p class="note">Plots the actual closing price as a line. label='Close' is what shows in the legend.</p>
+
+<pre>    for w in windows:
+        plt.plot(self.data['SMA_' + str(w)], label='SMA ' + str(w))</pre>
+<p class="note">Plots each moving average line on the same chart.</p>
+
+<pre>    plt.title(self.symbol + ' - Close with Moving Averages')
+    plt.xlabel('Date')
+    plt.ylabel('Price')
+    plt.legend()
+    plt.tight_layout()
+    plt.show()</pre>
+<p class="note">
+  title — sets the chart title (e.g., "AAPL - Close with Moving Averages")<br>
+  xlabel/ylabel — labels the axes<br>
+  legend() — shows the color-coded legend (Close, SMA 20, SMA 50)<br>
+  tight_layout() — adjusts spacing so nothing gets cut off<br>
+  show() — displays the chart in a popup window
+</p>
+
+<h2>plot_performance — Cumulative Gain/Loss Chart (Lines 60-71)</h2>
+
+<pre>def plot_performance(self):</pre>
+<p class="note">Plots how much you would have gained or lost as a percentage over time.</p>
+
+<pre>    cumulative = (1 + self.data['Change']).cumprod()</pre>
+<p class="note">This is the key line. Breaking it down:</p>
+<ul class="note">
+  <li>self.data['Change'] — daily percent changes (like 0.02 for +2%)</li>
+  <li>1 + self.data['Change'] — converts to a multiplier (1.02 means "102% of yesterday")</li>
+  <li>.cumprod() — cumulative product. Multiplies all the daily multipliers together running. So if day 1 is 1.02 and day 2 is 0.99, cumulative = 1.02 * 0.99 = 1.0098. This shows the total growth of $1 invested from day one.</li>
+</ul>
+
+<pre>    pct_gain = (cumulative - 1) * 100</pre>
+<p class="note">Converts to percentage. If cumulative is 1.15, that means 15% gain, so (1.15 - 1) * 100 = 15.</p>
+
+<pre>    plt.figure(figsize=(10, 6))
+    plt.plot(pct_gain)</pre>
+<p class="note">Creates a chart and plots the percent gain/loss line.</p>
+
+<pre>    plt.title(self.symbol + ' - Performance (% Gain/Loss)')
+    plt.xlabel('Date')
+    plt.ylabel('% Gain/Loss')</pre>
+<p class="note">Labels the chart.</p>
+
+<pre>    plt.gca().yaxis.set_major_formatter(mtick.PercentFormatter())</pre>
+<p class="note">
+  plt.gca() — "get current axes" (the current chart)<br>
+  .yaxis.set_major_formatter() — changes how y-axis numbers display<br>
+  mtick.PercentFormatter() — adds "%" signs to the y-axis labels
+</p>
+
+<pre>    plt.tight_layout()
+    plt.show()</pre>
+<p class="note">Adjusts layout and shows the chart.</p>
+
+<h2>main and Entry Point (Lines 74-80)</h2>
+
+<pre>def main():
+    aapl = Stock("AAPL")</pre>
+<p class="note">Creates a Stock object for Apple. This triggers __init__, which calls get_data(), which downloads data and calculates returns. All automatic.</p>
+
+<pre>    print(aapl.data)</pre>
+<p class="note">Prints the DataFrame (the table of prices and returns) to the terminal.</p>
+
+<pre>    aapl.plot_performance()
+    aapl.add_technical_indicators()</pre>
+<p class="note">Shows the two charts one at a time. Close the first to see the second.</p>
+
+<pre>if __name__ == "__main__":
+    main()</pre>
+<p class="note">Standard Python pattern. This means: "only run main() if this file is being run directly." If someone imports this file from another script, main() won't run automatically — they can just use the Stock class on its own.</p>
+
+<h2>QUICK REFERENCE — KEY CONCEPTS FOR EXAM</h2>
+
+<table>
+  <tr><th>Concept</th><th>What it means</th></tr>
+  <tr><td><code>class</code></td><td class="note">A blueprint that bundles data + functions together</td></tr>
+  <tr><td><code>self</code></td><td class="note">Refers to the current object instance</td></tr>
+  <tr><td><code>__init__</code></td><td class="note">Constructor — runs when you create an object</td></tr>
+  <tr><td><code>pct_change()</code></td><td class="note">Pandas method — calculates % change row to row</td></tr>
+  <tr><td><code>np.log().diff()</code></td><td class="note">Log return — instantaneous/continuous return</td></tr>
+  <tr><td><code>.rolling(w).mean()</code></td><td class="note">Moving average over w days</td></tr>
+  <tr><td><code>.cumprod()</code></td><td class="note">Cumulative product — chains daily returns together</td></tr>
+  <tr><td><code>yf.download()</code></td><td class="note">Downloads stock data from Yahoo Finance</td></tr>
+  <tr><td><code>pd.to_datetime()</code></td><td class="note">Converts strings to proper date objects</td></tr>
+  <tr><td><code>if __name__ == "__main__"</code></td><td class="note">Only runs code when file is executed directly</td></tr>
+</table>
+
+</body>
+</html>

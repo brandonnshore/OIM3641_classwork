@@ -12,7 +12,9 @@ sb.set_theme()
 STUDENT CHANGE LOG & AI DISCLOSURE:
 ----------------------------------
 1. Did you use an LLM (ChatGPT/Claude/etc.)? [Yes/No]
-Yes I tried to do as much as I could myself and using snippets of code from other classes, but then i fed it to gemini and asked its opinion
+Yes I tried to do as much as I could myself and using snippets of code from other classes, 
+but then i fed it to gemini and asked its opinion. the main change it made is it said we should have 3 graphs instead of two and added
+the entire pllot return dist at the bottom. I am unsure if that is too much or okay but I figured I would rather keep it.
 2. If yes, what was your primary prompt?
 "You are a developer whos only coding language is python and you write it the most efficent and simpified code, with no grandeur or LLM style writing, 
 please take this code and clean it up, ensure it works, and make any changes you feel are ABSOULTLEY needed"
@@ -76,11 +78,22 @@ class Stock:
         plt.tight_layout()
         plt.show()
 
+    def plot_return_dist(self):
+        """Plots histogram of instantaneous returns."""
+        plt.figure(figsize=(10, 6))
+        plt.hist(self.data['Instant_Return'].dropna(), bins=50)
+        plt.title(self.symbol + ' - Distribution of Instant Returns')
+        plt.xlabel('Instant Return')
+        plt.ylabel('Frequency')
+        plt.tight_layout()
+        plt.show()
+
 
 def main():
     aapl = Stock("AAPL")
     print(aapl.data)
     aapl.plot_performance()
+    aapl.plot_return_dist()
     aapl.add_technical_indicators()
 
 if __name__ == "__main__":
