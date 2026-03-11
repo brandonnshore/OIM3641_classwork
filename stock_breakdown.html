@@ -1,23 +1,34 @@
 <!DOCTYPE html>
 <html>
 <head>
+<meta charset="UTF-8">
 <style>
   body { font-family: Arial, sans-serif; font-size: 14px; max-width: 850px; margin: 40px auto; padding: 0 20px; }
   h1 { text-align: center; }
-  h2 { border-bottom: 2px solid #333; padding-bottom: 5px; margin-top: 40px; }
+  h2 { border-bottom: 2px solid #333; padding-bottom: 5px; margin-top: 40px; margin-bottom: 2px; }
+  .subtitle { color: #555; font-size: 13px; margin: 0 0 14px 0; font-style: italic; }
   pre { background: #f4f4f4; padding: 12px; border-radius: 5px; overflow-x: auto; font-size: 13px; }
   .note { color: green; margin: 8px 0; }
   table { border-collapse: collapse; width: 100%; margin: 10px 0; }
   th, td { border: 1px solid #999; padding: 8px; text-align: left; }
   th { background: #f4f4f4; }
-  @media print { body { font-size: 12px; } pre { font-size: 11px; } }
+  .print-btn { position: fixed; top: 16px; right: 16px; background: #333; color: #fff; border: none; padding: 10px 24px; font-size: 14px; cursor: pointer; border-radius: 4px; z-index: 100; }
+  .print-btn:hover { background: #555; }
+  @media print {
+    body { font-size: 11px; }
+    pre { font-size: 10px; }
+    .print-btn { display: none !important; }
+  }
 </style>
 </head>
 <body>
 
+<button class="print-btn" onclick="window.print()">Print</button>
+
 <h1>STOCK.PY — LINE BY LINE BREAKDOWN</h1>
 
 <h2>IMPORTS (Lines 1-7)</h2>
+<p class="subtitle">Loads all the libraries we need — data, math, charts, and stock prices</p>
 
 <pre>import datetime as dt</pre>
 <p class="note">Imports Python's built-in date/time library. We call it "dt" for short. Used to calculate dates like "one year ago."</p>
@@ -37,10 +48,11 @@
 <pre>import seaborn as sb</pre>
 <p class="note">A plotting library built on top of matplotlib. Makes charts look nicer by default.</p>
 
-<pre>import yfinance as yf</pre>
+<pre>import yfinance as yf  # Assuming yfinance for data API</pre>
 <p class="note">A library that downloads stock price data from Yahoo Finance for free.</p>
 
 <h2>SETUP (Lines 9, 19-20)</h2>
+<p class="subtitle">Sets the chart style and defines the default 1-year date range</p>
 
 <pre>sb.set_theme()</pre>
 <p class="note">Applies seaborn's default visual theme to all plots (nicer grid lines, colors, fonts).</p>
@@ -58,11 +70,13 @@
 <p class="note">Same thing but for today's date. So by default we get one year of data.</p>
 
 <h2>THE CLASS: Stock (Line 23)</h2>
+<p class="subtitle">The blueprint — bundles a stock's data and all its charts into one object</p>
 
 <pre>class Stock:</pre>
 <p class="note">Defines a class called Stock. A class is a blueprint — it bundles data (the stock prices) and functions (plotting, calculating) together into one object.</p>
 
 <h2>__init__ — The Constructor (Lines 24-28)</h2>
+<p class="subtitle">Runs automatically when you create a Stock — saves the ticker, dates, and downloads the data</p>
 
 <pre>def __init__(self, symbol, start=DEFAULT_START, end=DEFAULT_END):</pre>
 <p class="note">This runs automatically when you create a Stock object. Parameters:</p>
@@ -81,7 +95,8 @@
 <pre>    self.data = self.get_data()</pre>
 <p class="note">Immediately calls get_data() and stores the result in self.data. So the moment you create a Stock object, it downloads the data.</p>
 
-<h2>get_data — Downloads Stock Data (Lines 30-36)</h2>
+<h2>get_data — Downloads Stock Data (Lines 30-37)</h2>
+<p class="subtitle">Pulls price history from Yahoo Finance, cleans it up, and adds return columns</p>
 
 <pre>def get_data(self):</pre>
 <p class="note">Method that downloads historical price data from Yahoo Finance.</p>
@@ -101,7 +116,8 @@
 <pre>    return data</pre>
 <p class="note">Returns the enriched DataFrame, which gets stored in self.data back in __init__.</p>
 
-<h2>calc_returns — Calculates Daily Returns (Lines 38-41)</h2>
+<h2>calc_returns — Calculates Daily Returns (Lines 39-42)</h2>
+<p class="subtitle">Adds two columns: simple percent change and log return for each day</p>
 
 <pre>def calc_returns(self, df):</pre>
 <p class="note">Helper method that adds two new columns to the DataFrame. Takes df (the DataFrame) as input.</p>
@@ -118,7 +134,8 @@
   <li>This is the standard way to calculate "continuously compounded" returns in finance. Log returns are additive (you can sum them across days) which makes them useful for analysis.</li>
 </ul>
 
-<h2>add_technical_indicators — Moving Averages + Plot (Lines 43-58)</h2>
+<h2>add_technical_indicators — Moving Averages + Plot (Lines 44-59)</h2>
+<p class="subtitle">Calculates 20-day and 50-day averages, then charts them alongside the closing price</p>
 
 <pre>def add_technical_indicators(self, windows=[20, 50]):</pre>
 <p class="note">Adds Simple Moving Averages (SMAs) to the data and plots them. windows=[20, 50] means it defaults to 20-day and 50-day moving averages.</p>
@@ -159,7 +176,8 @@
   show() — displays the chart in a popup window
 </p>
 
-<h2>plot_performance — Cumulative Gain/Loss Chart (Lines 60-71)</h2>
+<h2>plot_performance — Cumulative Gain/Loss Chart (Lines 61-72)</h2>
+<p class="subtitle">Shows what would happen to $1 invested — tracks total % gain or loss over time</p>
 
 <pre>def plot_performance(self):</pre>
 <p class="note">Plots how much you would have gained or lost as a percentage over time.</p>
@@ -195,7 +213,38 @@
     plt.show()</pre>
 <p class="note">Adjusts layout and shows the chart.</p>
 
-<h2>main and Entry Point (Lines 74-80)</h2>
+<h2>plot_return_dist — Histogram of Returns (Lines 74-81)</h2>
+<p class="subtitle">Bar chart showing how often each daily return size happened — most days near zero, rare big swings</p>
+
+<pre>def plot_return_dist(self):</pre>
+<p class="note">Plots a histogram (bar chart) showing how often the stock had certain daily returns. This shows the distribution — most days cluster near zero, with fewer extreme up or down days.</p>
+
+<pre>    plt.figure(figsize=(10, 6))</pre>
+<p class="note">Creates a new chart that's 10 inches wide and 6 inches tall.</p>
+
+<pre>    plt.hist(self.data['Instant_Return'].dropna(), bins=50)</pre>
+<p class="note">Draws the histogram. Breaking it down:</p>
+<ul class="note">
+  <li>self.data['Instant_Return'] — the column of daily log returns</li>
+  <li>.dropna() — removes NaN values (the first row has no return to calculate)</li>
+  <li>bins=50 — splits the data into 50 bars/buckets. More bins = more detail.</li>
+</ul>
+
+<pre>    plt.title(self.symbol + ' - Distribution of Instant Returns')
+    plt.xlabel('Instant Return')
+    plt.ylabel('Frequency')</pre>
+<p class="note">
+  title — chart title (e.g., "AAPL - Distribution of Instant Returns")<br>
+  xlabel — the x-axis shows the return value (negative = loss, positive = gain)<br>
+  ylabel — "Frequency" means how many days had that return
+</p>
+
+<pre>    plt.tight_layout()
+    plt.show()</pre>
+<p class="note">Adjusts layout and shows the chart.</p>
+
+<h2>main and Entry Point (Lines 84-90)</h2>
+<p class="subtitle">Where the program actually runs — creates an Apple stock, prints the data, shows all 3 charts</p>
 
 <pre>def main():
     aapl = Stock("AAPL")</pre>
@@ -205,8 +254,9 @@
 <p class="note">Prints the DataFrame (the table of prices and returns) to the terminal.</p>
 
 <pre>    aapl.plot_performance()
+    aapl.plot_return_dist()
     aapl.add_technical_indicators()</pre>
-<p class="note">Shows the two charts one at a time. Close the first to see the second.</p>
+<p class="note">Shows the three charts one at a time. Close each one to see the next.</p>
 
 <pre>if __name__ == "__main__":
     main()</pre>
@@ -216,16 +266,18 @@
 
 <table>
   <tr><th>Concept</th><th>What it means</th></tr>
-  <tr><td><code>class</code></td><td class="note">A blueprint that bundles data + functions together</td></tr>
-  <tr><td><code>self</code></td><td class="note">Refers to the current object instance</td></tr>
-  <tr><td><code>__init__</code></td><td class="note">Constructor — runs when you create an object</td></tr>
-  <tr><td><code>pct_change()</code></td><td class="note">Pandas method — calculates % change row to row</td></tr>
-  <tr><td><code>np.log().diff()</code></td><td class="note">Log return — instantaneous/continuous return</td></tr>
-  <tr><td><code>.rolling(w).mean()</code></td><td class="note">Moving average over w days</td></tr>
-  <tr><td><code>.cumprod()</code></td><td class="note">Cumulative product — chains daily returns together</td></tr>
-  <tr><td><code>yf.download()</code></td><td class="note">Downloads stock data from Yahoo Finance</td></tr>
+  <tr><td><code>class</code></td><td class="note">A blueprint that bundles data + functions together into one object</td></tr>
+  <tr><td><code>self</code></td><td class="note">How the object refers to itself — stores and accesses its own data</td></tr>
+  <tr><td><code>__init__</code></td><td class="note">The constructor — runs automatically when you create an object</td></tr>
+  <tr><td><code>pct_change()</code></td><td class="note">Calculates % change row to row: (today - yesterday) / yesterday</td></tr>
+  <tr><td><code>np.log().diff()</code></td><td class="note">Log return — continuously compounded, can be added across days</td></tr>
+  <tr><td><code>.rolling(w).mean()</code></td><td class="note">Sliding window average over w days — smooths out daily noise</td></tr>
+  <tr><td><code>.cumprod()</code></td><td class="note">Chains daily multipliers together — shows growth of $1 over time</td></tr>
+  <tr><td><code>yf.download()</code></td><td class="note">Downloads stock data table from Yahoo Finance</td></tr>
   <tr><td><code>pd.to_datetime()</code></td><td class="note">Converts strings to proper date objects</td></tr>
-  <tr><td><code>if __name__ == "__main__"</code></td><td class="note">Only runs code when file is executed directly</td></tr>
+  <tr><td><code>.dropna()</code></td><td class="note">Removes NaN (empty/missing) values from a column</td></tr>
+  <tr><td><code>plt.hist()</code></td><td class="note">Draws a histogram (bar chart of frequency distribution)</td></tr>
+  <tr><td><code>if __name__ == "__main__"</code></td><td class="note">Only runs code when file is executed directly, not when imported</td></tr>
 </table>
 
 </body>
