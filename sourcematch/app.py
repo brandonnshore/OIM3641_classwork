@@ -11,6 +11,7 @@ import json
 import os
 import re
 import time
+import urllib.request
 from dataclasses import dataclass, field, asdict
 
 import streamlit as st
@@ -103,6 +104,40 @@ def parse_pdf(file_bytes: bytes, filename: str, start_id: int) -> list[Chunk]:
             continue  # skip cover pages / images
         chunks.append(
             Chunk(id=start_id + len(chunks), doc=filename, page=i + 1, text=text)
+        )
+    return chunks
+
+
+def parse_url(url: str, start_id: int) -> list[Chunk]:
+    """Fetch a URL, strip HTML, split into ~2000-char 'pages'."""
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    with urllib.request.urlopen(req, timeout=15) as r:
+        html = r.read().decode("utf-8", errors="ignore")
+    # Drop scripts/styles before tag-stripping.
+    html = re.sub(r"<script[^>]*>.*?</script>", " ", html, flags=re.DOTALL | re.IGNORECASE)
+    html = re.sub(r"<style[^>]*>.*?</style>", " ", html, flags=re.DOTALL | re.IGNORECASE)
+    # Use the page <title> as the source name when available.
+    m = re.search(r"<title[^>]*>(.*?)</title>", html, flags=re.DOTALL | re.IGNORECASE)
+    if m:
+        name = re.sub(r"\s+", " ", m.group(1)).strip()[:80]
+    else:
+        name = url.split("/")[2] if "//" in url else url
+    text = re.sub(r"<[^>]+>", " ", html)
+    text = re.sub(r"&\w+;", " ", text)  # strip basic HTML entities
+    text = re.sub(r"\s+", " ", text).strip()
+    chunks: list[Chunk] = []
+    size = 2000
+    for i in range(0, len(text), size):
+        piece = text[i : i + size].strip()
+        if len(piece) < 40:
+            continue
+        chunks.append(
+            Chunk(
+                id=start_id + len(chunks),
+                doc=name,
+                page=(i // size) + 1,
+                text=piece,
+            )
         )
     return chunks
 
@@ -266,324 +301,366 @@ def build_export(quotes_by_section: dict[str, list[Quote]], style: str) -> str:
     return "\n".join(out)
 
 
+# ---------- in-document insertion + inline citation rendering ----------
+
+
+def insert_quote_into_paper(q: Quote) -> None:
+    """Drop a verbatim quote + cite marker under its section heading in ss.paper."""
+    doc_name = q.doc.rsplit(".", 1)[0].replace("_", " ")
+    snippet = f'"{q.text}" [cite:{doc_name}:{q.page}]'
+    paper = st.session_state.paper
+    idx = paper.find(q.section)
+    if idx == -1:
+        st.session_state.paper = (
+            paper.rstrip() + f"\n\n## {q.section}\n\n{snippet}\n"
+        )
+    else:
+        line_end = paper.find("\n", idx)
+        if line_end == -1:
+            line_end = len(paper)
+        st.session_state.paper = paper[:line_end] + f"\n\n{snippet}" + paper[line_end:]
+
+
+_CITE_RE = re.compile(r"\[cite:([^:\]]+):(\d+)\]")
+
+
+def render_paper_with_citations(paper: str) -> str:
+    """Replace [cite:doc:page] markers with numbered superscripts and append References."""
+    refs: list[tuple[str, int]] = []
+    seen: dict[tuple[str, int], int] = {}
+
+    def replace(m):
+        key = (m.group(1), int(m.group(2)))
+        if key not in seen:
+            refs.append(key)
+            seen[key] = len(refs)
+        return f"<sup>[{seen[key]}]</sup>"
+
+    body = _CITE_RE.sub(replace, paper)
+    if not refs:
+        return body
+    lines = ["", "---", "", "**References**", ""]
+    for i, (doc, page) in enumerate(refs, 1):
+        lines.append(f"{i}. {doc}, p. {page}")
+    return body + "\n" + "\n".join(lines)
+
+
+def write_paper_from_bucket(outline: str, bucket: list[Quote]) -> str:
+    """Ask Gemini to draft the full paper using the outline + selected quotes."""
+    if not bucket:
+        return outline
+    quote_lines = []
+    for q in bucket:
+        doc_name = q.doc.rsplit(".", 1)[0].replace("_", " ")
+        marker = f"[cite:{doc_name}:{q.page}]"
+        quote_lines.append(f'- Section "{q.section}": "{q.text}" {marker}')
+    quotes_block = "\n".join(quote_lines)
+    prompt = f"""You are drafting a research paper. Use the outline below and weave
+in the provided verbatim quotes naturally within their assigned sections.
+
+Rules:
+1. Use the outline structure. Render section headings as markdown (## Heading).
+2. Each provided quote MUST appear VERBATIM in its assigned section, wrapped in
+   double quotes, immediately followed by its [cite:...] citation marker
+   exactly as given. Do not modify quote text or citation markers.
+3. Write supporting prose around the quotes — introduce them, analyze them,
+   connect ideas between sections. Aim for clear, academic tone.
+4. Return ONLY the markdown paper. No code fences, no commentary.
+
+OUTLINE:
+{outline}
+
+QUOTES TO INCLUDE (exactly as given, with their citation markers):
+{quotes_block}
+"""
+    resp = gemini_generate(prompt)
+    return (resp.text or "").strip()
+
+
 # ---------- UI ----------
 
 st.set_page_config(page_title="SourceMatch", layout="wide")
 
-# session state defaults
-ss = st.session_state
-ss.setdefault("step", 1)
-ss.setdefault("outline", "")
-ss.setdefault("chunks", [])  # list[Chunk]
-ss.setdefault("sections", [])  # list[dict]
-ss.setdefault("quotes_by_section", {})  # dict[str, list[Quote]]
-ss.setdefault("parsed_files", [])  # list[(name, pages)]
-
-# header
+# Wider sidebar so the workflow panel breathes.
 st.markdown(
     """
-    <div style="text-align:center; padding: 12px 0 4px 0;">
-      <h1 style="margin-bottom: 0;">SourceMatch</h1>
+    <style>
+    section[data-testid="stSidebar"] { min-width: 440px !important; }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+ss = st.session_state
+ss.setdefault("paper", "")
+ss.setdefault("chunks", [])  # list[Chunk]
+ss.setdefault("parsed_files", [])  # list[(name, pages)]
+ss.setdefault("sections", [])  # list[dict]
+ss.setdefault("quotes_by_section", {})  # dict[str, list[Quote]]
+ss.setdefault("staged_urls", [])  # list[str]
+ss.setdefault("bucket", [])  # list[Quote] — selected for full-paper draft
+
+
+# ---------- Sidebar: SourceMatch workflow ----------
+
+with st.sidebar:
+    st.markdown("## SourceMatch")
+    st.caption("Upload your outline. Upload your sources. Get real, verified quotes.")
+    st.divider()
+
+    # 1. Outline
+    with st.expander("1. Outline", expanded=True):
+        desc = st.text_input(
+            "Describe your paper",
+            placeholder="A paper on EU energy policy...",
+            key="outline_desc",
+        )
+        if st.button("Generate outline with AI", use_container_width=True):
+            if not desc.strip():
+                st.warning("Enter a description first.")
+            else:
+                with st.spinner("Generating outline..."):
+                    try:
+                        outline = generate_outline_from_description(desc)
+                        ss.paper = (outline + "\n\n" + ss.paper).strip()
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Could not generate outline: {e}")
+        st.caption("Or just write your outline at the top of your paper.")
+
+    # 2. Sources
+    with st.expander("2. Sources"):
+        files = st.file_uploader(
+            "Upload PDFs",
+            type=["pdf"],
+            accept_multiple_files=True,
+            label_visibility="collapsed",
+        )
+        # Enter-to-add URL form (st.form submits on Enter, no Cmd+Enter needed).
+        with st.form("add_url_form", clear_on_submit=True):
+            new_url = st.text_input(
+                "Add a URL (press Enter)",
+                placeholder="https://example.com/article",
+            )
+            submitted = st.form_submit_button("Add URL", use_container_width=True)
+            if submitted and new_url.strip():
+                ss.staged_urls.append(new_url.strip())
+        if ss.staged_urls:
+            st.caption("**URLs queued:**")
+            for i, u in enumerate(ss.staged_urls):
+                cols = st.columns([6, 1])
+                with cols[0]:
+                    st.caption(f"• {u}")
+                with cols[1]:
+                    if st.button("✕", key=f"rm_url_{i}"):
+                        ss.staged_urls.pop(i)
+                        st.rerun()
+
+        if (files or ss.staged_urls) and st.button(
+            "Parse sources", use_container_width=True
+        ):
+            ss.chunks = []
+            ss.parsed_files = []
+            next_id = 0
+            with st.spinner("Parsing sources..."):
+                for f in files or []:
+                    try:
+                        new_chunks = parse_pdf(f.getvalue(), f.name, next_id)
+                        ss.chunks.extend(new_chunks)
+                        next_id += len(new_chunks)
+                        pages = max((c.page for c in new_chunks), default=0)
+                        ss.parsed_files.append((f.name, pages))
+                    except Exception as e:
+                        st.error(f"Failed to parse {f.name}: {e}")
+                for url in ss.staged_urls:
+                    try:
+                        new_chunks = parse_url(url, next_id)
+                        if not new_chunks:
+                            st.warning(f"No readable text at {url}")
+                            continue
+                        ss.chunks.extend(new_chunks)
+                        next_id += len(new_chunks)
+                        pages = max((c.page for c in new_chunks), default=0)
+                        ss.parsed_files.append((new_chunks[0].doc, pages))
+                    except Exception as e:
+                        st.error(f"Failed to fetch {url}: {e}")
+        if ss.parsed_files:
+            st.success(
+                f"Parsed {len(ss.parsed_files)} sources · "
+                f"{len(ss.chunks)} passages indexed."
+            )
+            for name, pages in ss.parsed_files:
+                st.caption(f"• {name} ({pages} pg)")
+
+    # 3. Match
+    with st.expander("3. Match"):
+        ready = bool(ss.paper.strip()) and bool(ss.chunks)
+        if st.button(
+            "Find my quotes",
+            type="primary",
+            disabled=not ready,
+            use_container_width=True,
+        ):
+            status = st.empty()
+            status.markdown("Analyzing outline...")
+            try:
+                ss.sections = analyze_outline(ss.paper)
+            except Exception as e:
+                st.error(f"Outline analysis failed: {e}")
+                ss.sections = []
+            chunks_by_id = {c.id: c for c in ss.chunks}
+            results: dict[str, list[Quote]] = {}
+            total_dropped = 0
+            n = max(1, len(ss.sections))
+            prog = st.progress(0.0)
+            for i, sec in enumerate(ss.sections):
+                label = sec["section"][:40]
+                status.markdown(f"Matching `{label}` ({i+1}/{n})...")
+                try:
+                    candidates = rank_quotes_for_section(
+                        sec["section"], sec.get("evidence_need", ""), ss.chunks
+                    )
+                except Exception as e:
+                    st.warning(f"{sec['section']}: {e}")
+                    candidates = []
+                verified = verify_quotes(candidates, chunks_by_id)
+                for q in verified:
+                    q.section = sec["section"]
+                results[sec["section"]] = verified
+                total_dropped += max(0, len(candidates) - len(verified))
+                prog.progress((i + 1) / n)
+            ss.quotes_by_section = results
+            prog.empty()
+            status.empty()
+            kept = sum(len(v) for v in ss.quotes_by_section.values())
+            if total_dropped:
+                st.info(f"{kept} verified · {total_dropped} dropped (not verbatim).")
+            else:
+                st.success(f"{kept} verified quotes.")
+        if not ready:
+            st.caption(":gray[Add an outline and parse sources first.]")
+
+    # 4. Review & Export
+    with st.expander("4. Review & Export"):
+        if not ss.quotes_by_section:
+            st.caption(":gray[Run matching first.]")
+        else:
+            for section, quotes in ss.quotes_by_section.items():
+                st.markdown(f"**{section}**")
+                if not quotes:
+                    st.caption("No verified quotes.")
+                for i, q in enumerate(quotes):
+                    preview = q.text if len(q.text) <= 90 else q.text[:90] + "…"
+                    q.accepted = st.checkbox(
+                        f"\"{preview}\"",
+                        value=q.accepted,
+                        key=f"acc_{section}_{i}",
+                        help=f"{q.doc} · p. {q.page}",
+                    )
+                    in_bucket = any(
+                        b.text == q.text and b.doc == q.doc and b.page == q.page
+                        for b in ss.bucket
+                    )
+                    if st.button(
+                        "✓ Added to draft" if in_bucket else "Add to draft",
+                        key=f"ins_{section}_{i}",
+                        use_container_width=True,
+                        disabled=in_bucket,
+                    ):
+                        ss.bucket.append(q)
+                        st.rerun()
+            st.divider()
+            for style in ("APA", "MLA", "Chicago"):
+                st.download_button(
+                    f"Download {style}",
+                    data=build_export(ss.quotes_by_section, style),
+                    file_name=f"sourcematch_{style.lower()}.txt",
+                    mime="text/plain",
+                    use_container_width=True,
+                    key=f"dl_{style}",
+                )
+
+    # 5. Write paper
+    with st.expander(f"5. Write paper ({len(ss.bucket)} in draft)"):
+        if not ss.bucket:
+            st.caption(
+                ":gray[No quotes selected yet — use **Add to draft** in panel 4.]"
+            )
+        else:
+            for i, q in enumerate(ss.bucket):
+                preview = q.text if len(q.text) <= 70 else q.text[:70] + "…"
+                cols = st.columns([6, 1])
+                with cols[0]:
+                    st.caption(f"\"{preview}\"")
+                    st.caption(f":gray[{q.section} · {q.doc} p. {q.page}]")
+                with cols[1]:
+                    if st.button("✕", key=f"rm_b_{i}"):
+                        ss.bucket.pop(i)
+                        st.rerun()
+            st.divider()
+            disabled = not ss.paper.strip()
+            if st.button(
+                "Write full paper",
+                type="primary",
+                use_container_width=True,
+                disabled=disabled,
+            ):
+                with st.spinner("Drafting your paper..."):
+                    try:
+                        ss.paper = write_paper_from_bucket(ss.paper, ss.bucket)
+                        st.success("Paper drafted. Open the Write or Preview tab.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Drafting failed: {e}")
+            if disabled:
+                st.caption(":gray[Add an outline first.]")
+
+    st.divider()
+    if st.button("Start over", use_container_width=True):
+        for k in (
+            "paper", "chunks", "parsed_files", "sections",
+            "quotes_by_section", "staged_urls", "bucket",
+        ):
+            ss.pop(k, None)
+        st.rerun()
+
+
+# ---------- Main area: paper editor ----------
+
+st.markdown(
+    """
+    <div style="padding: 8px 0 4px 0;">
+      <h1 style="margin-bottom: 0;">Your paper</h1>
       <p style="color: #666; margin-top: 4px;">
-        Upload your outline. Upload your sources. Get real, verified quotes.
+        Write in markdown. Use <b>#</b> for headings, <b>**bold**</b>, <b>*italic*</b>,
+        <b>-</b> for bullets. Switch to Preview to see it rendered.
       </p>
     </div>
     """,
     unsafe_allow_html=True,
 )
 
-# stepper
-cols = st.columns(4)
-labels = ["1. Outline", "2. Sources", "3. Match", "4. Review and Export"]
-for i, (c, label) in enumerate(zip(cols, labels), start=1):
-    with c:
-        if i == ss.step:
-            st.markdown(f"**{label}**")
-        elif i < ss.step:
-            st.markdown(f"**{label}** (done)")
-        else:
-            st.markdown(f":gray[{label}]")
-st.divider()
+write_tab, preview_tab = st.tabs(["Write", "Preview"])
 
-
-# ---------- Step 1: Outline ----------
-
-if ss.step == 1:
-    st.subheader("Paper outline")
-    st.caption(
-        "Start by providing your paper outline. "
-        "This tells us what quotes to look for in your sources."
-    )
-
-    ss.outline = st.text_area(
-        "Outline",
-        value=ss.outline,
-        height=260,
-        placeholder=(
-            "Renewable Energy Policy in the EU\n\n"
-            "I. Introduction — current state of EU energy policy\n"
-            "II. Literature Review — effectiveness studies\n"
-            "III. Policy Analysis — comparing member states\n"
-            "IV. Conclusion — recommendations"
-        ),
-    )
-
-    with st.expander("Generate outline with AI"):
-        desc = st.text_input(
-            "Short description of your paper",
-            placeholder="A paper on how EU energy policy has shaped renewable adoption.",
-        )
-        if st.button("Generate with AI", type="secondary"):
-            if not desc.strip():
-                st.warning("Enter a description first.")
-            else:
-                with st.spinner("Generating outline..."):
-                    try:
-                        ss.outline = generate_outline_from_description(desc)
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Could not generate outline: {e}")
-
-    st.write("")
-    disabled = len(ss.outline.strip()) < 20
-    if st.button("Next: upload sources", type="primary", disabled=disabled):
-        ss.step = 2
-        st.rerun()
-    if disabled:
-        st.caption(":gray[Complete outline to continue]")
-
-
-# ---------- Step 2: Sources ----------
-
-elif ss.step == 2:
-    st.success(f"Outline ready — {ss.outline.splitlines()[0][:80]}")
-    st.subheader("Research sources")
-    st.caption(
-        "Drop PDF files. A Python parser extracts text deterministically — "
-        "every quote will trace back to a specific page."
-    )
-
-    files = st.file_uploader(
-        "Upload PDFs",
-        type=["pdf"],
-        accept_multiple_files=True,
+with write_tab:
+    st.text_area(
+        "Paper",
+        height=700,
         label_visibility="collapsed",
+        placeholder=(
+            "# My Paper Title\n\n"
+            "## I. Introduction\n\n"
+            "Start writing here..."
+        ),
+        key="paper",
     )
 
-    if files:
-        if st.button("Parse uploaded files"):
-            ss.chunks = []
-            ss.parsed_files = []
-            next_id = 0
-            prog = st.progress(0.0)
-            for i, f in enumerate(files):
-                try:
-                    new_chunks = parse_pdf(f.getvalue(), f.name, next_id)
-                    ss.chunks.extend(new_chunks)
-                    next_id += len(new_chunks)
-                    # use a rough page count = max page number seen
-                    pages = max((c.page for c in new_chunks), default=0)
-                    ss.parsed_files.append((f.name, pages))
-                except Exception as e:
-                    st.error(f"Failed to parse {f.name}: {e}")
-                prog.progress((i + 1) / len(files))
-            prog.empty()
-
-    if ss.parsed_files:
-        total_pages = sum(p for _, p in ss.parsed_files)
-        st.write(
-            f"**{len(ss.parsed_files)} sources parsed · "
-            f"{total_pages} pages · {len(ss.chunks)} passages indexed**"
-        )
-        for name, pages in ss.parsed_files:
-            st.write(f"{name}  —  {pages} pg  (parsed)")
-
-    c1, c2 = st.columns([1, 1])
-    with c1:
-        if st.button("Back", key="back_2"):
-            ss.step = 1
-            st.rerun()
-    with c2:
-        if st.button(
-            "Find my quotes",
-            type="primary",
-            disabled=len(ss.chunks) == 0,
-        ):
-            ss.step = 3
-            st.rerun()
-
-
-# ---------- Step 3: Matching ----------
-
-elif ss.step == 3:
-    st.subheader("Matching quotes to outline sections...")
-    st.caption(
-        f"Scanning {len(ss.parsed_files)} sources · "
-        f"{sum(p for _, p in ss.parsed_files)} pages"
-    )
-
-    if not ss.quotes_by_section:
-        steps_box = st.container()
-        with steps_box:
-            s1 = st.empty()
-            s2 = st.empty()
-            s3 = st.empty()
-            s4 = st.empty()
-
-        s1.markdown("Step 1. Analyzing outline for evidence needs...")
-        try:
-            ss.sections = analyze_outline(ss.outline)
-        except Exception as e:
-            st.error(f"Outline analysis failed: {e}")
-            st.stop()
-        s1.markdown("Step 1. Outline analyzed.")
-
-        s2.markdown("Step 2. Searching across parsed passages...")
-        chunks_by_id = {c.id: c for c in ss.chunks}
-        s2.markdown("Step 2. Passages indexed.")
-
-        s3.markdown("Step 3. Ranking best-fitting quotes per section...")
-        all_verified: dict[str, list[Quote]] = {}
-        total_candidates = 0
-        total_dropped = 0
-        drop_report: list[tuple[str, int, int]] = []  # (section, kept, dropped)
-        prog = st.progress(0.0)
-        for i, sec in enumerate(ss.sections):
-            try:
-                candidates = rank_quotes_for_section(
-                    sec["section"], sec.get("evidence_need", ""), ss.chunks
-                )
-            except Exception as e:
-                st.warning(f"Ranking failed for {sec['section']}: {e}")
-                candidates = []
-            verified = verify_quotes(candidates, chunks_by_id)
-            for q in verified:
-                q.section = sec["section"]
-            all_verified[sec["section"]] = verified
-            kept = len(verified)
-            dropped = max(0, len(candidates) - kept)
-            total_candidates += len(candidates)
-            total_dropped += dropped
-            drop_report.append((sec["section"], kept, dropped))
-            prog.progress((i + 1) / max(1, len(ss.sections)))
-        prog.empty()
-        s3.markdown("Step 3. Quotes ranked.")
-
-        s4.markdown("Step 4. :red[Verification — exact-match against original source text]")
-        ss.quotes_by_section = all_verified
-        total = sum(len(v) for v in all_verified.values())
-
-        # Report: candidates returned vs quotes that survived
-        # Python's exact-substring verification.
-        if total_dropped > 0:
-            s4.markdown(
-                f"Step 4. {total_dropped} unverifiable quote(s) auto-dropped. "
-                f"{total} verified against source documents."
+with preview_tab:
+    if ss.paper.strip():
+        with st.container(border=True):
+            st.markdown(
+                render_paper_with_citations(ss.paper),
+                unsafe_allow_html=True,
             )
-            st.warning(
-                f"Verification guard removed {total_dropped} of "
-                f"{total_candidates} candidate quotes that did not appear "
-                f"verbatim in the source text."
-            )
-        else:
-            s4.markdown(
-                f"Step 4. {total} quotes verified verbatim against source documents."
-            )
-            st.success("All quotes verified against source documents.")
-
-        with st.expander("Verification details"):
-            for name, kept, dropped in drop_report:
-                tag = "DROPPED" if dropped else "OK"
-                st.write(
-                    f"[{tag}] **{name}** — {kept} kept, {dropped} dropped"
-                )
-
-    total = sum(len(v) for v in ss.quotes_by_section.values())
-    st.write(f"**{total} verified quotes** across {len(ss.parsed_files)} sources.")
-
-    c1, c2 = st.columns(2)
-    with c1:
-        if st.button("Back", key="back_3"):
-            ss.step = 2
-            st.rerun()
-    with c2:
-        if st.button("Review and export", type="primary"):
-            ss.step = 4
-            st.rerun()
-
-
-# ---------- Step 4: Review & Export ----------
-
-elif ss.step == 4:
-    total = sum(len(v) for v in ss.quotes_by_section.values())
-    st.subheader(f"{total} quotes found")
-    st.caption(
-        f"{total} verified quotes found across {len(ss.parsed_files)} sources. "
-        "All extracted directly from your documents."
-    )
-
-    if not ss.quotes_by_section:
-        st.info("No quotes yet — run matching first.")
-        if st.button("Back to matching"):
-            ss.step = 3
-            st.rerun()
-        st.stop()
-
-    left, right = st.columns([1, 3])
-
-    with left:
-        st.markdown("**OUTLINE**")
-        section_names = list(ss.quotes_by_section.keys())
-        selected = st.radio(
-            "Sections",
-            section_names,
-            label_visibility="collapsed",
-        )
-
-    with right:
-        st.markdown(f"### {selected}")
-        quotes = ss.quotes_by_section.get(selected, [])
-        if not quotes:
-            st.info("No verified quotes for this section.")
-        for i, q in enumerate(quotes):
-            with st.container(border=True):
-                st.markdown(f"*\"{q.text}\"*")
-                st.caption(f"{q.doc} · p. {q.page}")
-                q.accepted = st.checkbox(
-                    "Accept",
-                    value=q.accepted,
-                    key=f"acc_{selected}_{i}",
-                )
-
-    st.divider()
-    st.markdown("**Export citations**")
-    ec1, ec2, ec3, ec4 = st.columns([1, 1, 1, 3])
-    for col, style in zip((ec1, ec2, ec3), ("APA", "MLA", "Chicago")):
-        with col:
-            text = build_export(ss.quotes_by_section, style)
-            st.download_button(
-                f"Download {style}",
-                data=text,
-                file_name=f"sourcematch_{style.lower()}.txt",
-                mime="text/plain",
-                use_container_width=True,
-            )
-
-    st.write("")
-    bc1, bc2 = st.columns(2)
-    with bc1:
-        if st.button("Back", key="back_4"):
-            ss.step = 3
-            st.rerun()
-    with bc2:
-        if st.button("Start over"):
-            for k in [
-                "step",
-                "outline",
-                "chunks",
-                "sections",
-                "quotes_by_section",
-                "parsed_files",
-            ]:
-                ss.pop(k, None)
-            st.rerun()
+    else:
+        st.caption(":gray[Nothing to preview yet — write something in the Write tab.]")
